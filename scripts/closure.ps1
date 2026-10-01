@@ -49,6 +49,23 @@ function Import-MsvcEnvironment {
   Write-Host "MSVC environment imported from $installation"
 }
 
+# Native tools write progress and diagnostics to stderr, which PowerShell would
+# otherwise treat as a terminating error under $ErrorActionPreference = 'Stop'.
+# Only the exit code decides whether a step failed.
+function Invoke-Native([string]$description, [scriptblock]$body) {
+  Write-Host "== $description"
+  $previous = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    & $body
+  } finally {
+    $ErrorActionPreference = $previous
+  }
+  if ($LASTEXITCODE -ne 0) {
+    throw "$description failed with exit code $LASTEXITCODE"
+  }
+}
+
 function New-ScratchDirectory([string]$label) {
   $base = if ($Scratch) { $Scratch } else { [System.IO.Path]::GetTempPath() }
   $path = Join-Path $base ('dom-' + $label + '-' + $PID + '-' + (Get-Random))
@@ -57,39 +74,33 @@ function New-ScratchDirectory([string]$label) {
 }
 
 function Build-And-Test([string]$repository, [string]$buildDirectory, [string]$configuration) {
-  Write-Host "== configure $configuration in $buildDirectory"
-  & cmake -S $repository -B $buildDirectory -G Ninja ('-DCMAKE_BUILD_TYPE=' + $configuration)
-  if ($LASTEXITCODE -ne 0) { throw "configure failed with exit code $LASTEXITCODE" }
-  Write-Host "== build $configuration"
-  & cmake --build $buildDirectory
-  if ($LASTEXITCODE -ne 0) { throw "build failed with exit code $LASTEXITCODE" }
-  Write-Host "== test $configuration"
-  & ctest --test-dir $buildDirectory --output-on-failure
-  if ($LASTEXITCODE -ne 0) { throw "tests failed with exit code $LASTEXITCODE" }
+  Invoke-Native "configure $configuration in $buildDirectory" {
+    cmake -S $repository -B $buildDirectory -G Ninja ('-DCMAKE_BUILD_TYPE=' + $configuration)
+  }
+  Invoke-Native "build $configuration" { cmake --build $buildDirectory }
+  Invoke-Native "test $configuration" { ctest --test-dir $buildDirectory --output-on-failure }
 }
 
 function Install-Prefix([string]$buildDirectory, [string]$installPrefix) {
   if (Test-Path -LiteralPath $installPrefix) {
     Remove-Item -LiteralPath $installPrefix -Recurse -Force
   }
-  Write-Host "== install to $installPrefix"
-  & cmake --install $buildDirectory --prefix $installPrefix
-  if ($LASTEXITCODE -ne 0) { throw "install failed with exit code $LASTEXITCODE" }
+  Invoke-Native "install to $installPrefix" {
+    cmake --install $buildDirectory --prefix $installPrefix
+  }
 }
 
 function Build-And-Run-Consumer([string]$repository, [string]$installPrefix, [string]$configuration) {
   $consumerBuild = New-ScratchDirectory 'consumer-build'
   $store = New-ScratchDirectory 'consumer-store'
   try {
-    Write-Host '== configure the downstream consumer'
-    & cmake -S (Join-Path $repository 'examples\consumer') -B $consumerBuild -G Ninja ('-DCMAKE_BUILD_TYPE=' + $configuration) ('-DCMAKE_PREFIX_PATH=' + $installPrefix)
-    if ($LASTEXITCODE -ne 0) { throw "consumer configure failed with exit code $LASTEXITCODE" }
-    Write-Host '== build the downstream consumer'
-    & cmake --build $consumerBuild
-    if ($LASTEXITCODE -ne 0) { throw "consumer build failed with exit code $LASTEXITCODE" }
-    Write-Host '== run the downstream consumer against the installed package'
-    & (Join-Path $consumerBuild 'dom_consumer.exe') (Join-Path $store 'store')
-    if ($LASTEXITCODE -ne 0) { throw "consumer run failed with exit code $LASTEXITCODE" }
+    Invoke-Native 'configure the downstream consumer' {
+      cmake -S (Join-Path $repository 'examples\consumer') -B $consumerBuild -G Ninja ('-DCMAKE_BUILD_TYPE=' + $configuration) ('-DCMAKE_PREFIX_PATH=' + $installPrefix)
+    }
+    Invoke-Native 'build the downstream consumer' { cmake --build $consumerBuild }
+    Invoke-Native 'run the downstream consumer against the installed package' {
+      & (Join-Path $consumerBuild 'dom_consumer.exe') (Join-Path $store 'store')
+    }
   } finally {
     Remove-Item -LiteralPath $consumerBuild -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $store -Recurse -Force -ErrorAction SilentlyContinue
@@ -124,16 +135,17 @@ if ($Stage -eq 'fresh') {
   }
   $clone = New-ScratchDirectory 'fresh-clone'
   try {
-    Write-Host "== clone $Remote $Ref into $clone"
-    & git clone --branch $Ref $Remote (Join-Path $clone 'source')
-    if ($LASTEXITCODE -ne 0) { throw "clone failed with exit code $LASTEXITCODE" }
+    Invoke-Native "clone $Remote $Ref into $clone" {
+      git clone --branch $Ref $Remote (Join-Path $clone 'source')
+    }
     $source = Join-Path $clone 'source'
+    # The clone drives itself with its own committed scripts: configure, build,
+    # test, install and run the downstream consumer, in both configurations.
     foreach ($configuration in @('Release', 'Debug')) {
-      $buildDirectory = Join-Path $clone ('build-' + $configuration.ToLowerInvariant())
-      Build-And-Test $source $buildDirectory $configuration
       $freshPrefix = Join-Path $clone ('prefix-' + $configuration.ToLowerInvariant())
-      Install-Prefix $buildDirectory $freshPrefix
-      Build-And-Run-Consumer $source $freshPrefix $configuration
+      Invoke-Native "closure inside the fresh clone ($configuration)" {
+        & (Join-Path $source 'scripts\closure.ps1') -Stage all -Config $configuration -Prefix $freshPrefix
+      }
     }
   } finally {
     Remove-Item -LiteralPath $clone -Recurse -Force -ErrorAction SilentlyContinue

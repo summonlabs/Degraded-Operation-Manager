@@ -55,6 +55,23 @@ function Import-MsvcEnvironment {
   Write-Host "MSVC environment imported from $installation"
 }
 
+# Native tools write progress and diagnostics to stderr, which PowerShell would
+# otherwise treat as a terminating error under $ErrorActionPreference = 'Stop'.
+# Only the exit code decides whether a step failed.
+function Invoke-Native([string]$description, [scriptblock]$body) {
+  Write-Host "== $description"
+  $previous = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    & $body
+  } finally {
+    $ErrorActionPreference = $previous
+  }
+  if ($LASTEXITCODE -ne 0) {
+    throw "$description failed with exit code $LASTEXITCODE"
+  }
+}
+
 Import-MsvcEnvironment
 
 if (-not $BuildDir) {
@@ -77,24 +94,17 @@ if ($Sanitizer -eq 'asan') { $configureArgs += '-DDOM_ENABLE_ASAN=ON' }
 if ($Sanitizer -eq 'ubsan') { $configureArgs += '-DDOM_ENABLE_UBSAN=ON' }
 if ($Analyze) { $configureArgs += '-DDOM_ENABLE_ANALYZE=ON' }
 
-Write-Host ('cmake ' + ($configureArgs -join ' '))
-& cmake @configureArgs
-if ($LASTEXITCODE -ne 0) { throw "CMake configuration failed with exit code $LASTEXITCODE" }
-
 $buildArgs = @('--build', $BuildDir)
 if ($Jobs -gt 0) { $buildArgs += @('--parallel', "$Jobs") }
-& cmake @buildArgs
-if ($LASTEXITCODE -ne 0) { throw "Build failed with exit code $LASTEXITCODE" }
 
+Invoke-Native ('configure: cmake ' + ($configureArgs -join ' ')) { cmake @configureArgs }
+Invoke-Native "build $Config" { cmake @buildArgs }
 if ($RunTests) {
-  & ctest --test-dir $BuildDir --output-on-failure
-  if ($LASTEXITCODE -ne 0) { throw "ctest failed with exit code $LASTEXITCODE" }
+  Invoke-Native 'run the test suite' { ctest --test-dir $BuildDir --output-on-failure }
 }
-
 if ($Install) {
   if (-not $Prefix) { $Prefix = Join-Path $root ('install\' + $Config.ToLowerInvariant()) }
-  & cmake --install $BuildDir --prefix $Prefix
-  if ($LASTEXITCODE -ne 0) { throw "Install failed with exit code $LASTEXITCODE" }
+  Invoke-Native "install to $Prefix" { cmake --install $BuildDir --prefix $Prefix }
   Write-Host "Installed to $Prefix"
 }
 
