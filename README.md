@@ -406,11 +406,14 @@ Both workloads are synthetic facility models; the durability is real.
 
 | Workload | Scale | Measured |
 | --- | --- | --- |
-| engine evaluation (no I/O) | 32 modes, 513 records, 2000 evaluations | 500 evaluations/second |
-| durable publication | 32 modes, 513 records, 80 evaluations | 81 generations, 769471 bytes (about 9.5 KB each), 73 committed generations/second |
+| engine evaluation (no I/O) | 32 modes, 513 records, 2000 evaluations | 500 to 720 evaluations/second |
+| durable publication | 32 modes, 513 records, 80 evaluations | 81 generations, 769471 bytes (about 9.5 KB each), 73 to 94 committed generations/second |
 
 Durable publication counts completed generations, including the real staged
-write, flush, read-back verification, atomic rename and journal flushes.
+write, flush, read-back verification, atomic rename and journal flushes. Both
+figures are wall-clock measurements repeated on the host described above; the
+spread is host load, not an algorithmic difference, and the lower figure is the
+measurement taken while other local work was running.
 
 ### 7.5 Packaging, downstream consumption and fresh clone
 
