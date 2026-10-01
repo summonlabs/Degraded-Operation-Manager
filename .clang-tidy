@@ -1,0 +1,24 @@
+# Degraded Operation Manager - static analysis configuration.
+#
+# Copyright 2026 Summon Software Labs.
+# SPDX-License-Identifier: Apache-2.0
+#
+# No third-party configuration is vendored and no check is enabled that the
+# project does not act on. On hosts without clang-tidy the equivalent MSVC
+# /analyze pass (DOM_ENABLE_ANALYZE) is used instead.
+Checks: >
+  -*,
+  clang-analyzer-*,
+  bugprone-*,
+  performance-*,
+  portability-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-branch-clone
+
+# bugprone-easily-swappable-parameters is disabled because the domain model uses
+# strongly typed identities precisely so that positional confusion is a compile
+# error, and the remaining same-typed pairs are ordered pairs whose meaning is
+# carried by the parameter name.
+#
+# bugprone-branch-clone is disabled because the canonical decoders legitimately
+# share an identical body across record kinds.

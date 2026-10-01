@@ -1,0 +1,17 @@
+Degraded Operation Manager
+
+Copyright © Summon Software Labs
+
+Degraded Operation Manager is an open-source, vendor-neutral runtime for governing facility-wide degraded operating modes: it decides which mode is authoritative from the current incidents, failure domains, capacity, redundancy, power, cooling, maintenance, policy and protected obligations, what service that mode still permits, what it must restrict, and what evidence is required to leave it.
+
+This product is licensed under the Apache License, Version 2.0. See the
+LICENSE file in this distribution for the full license text.
+
+Degraded Operation Manager does not collect or transmit any telemetry. All
+telemetry is written to local files chosen by the operator and never leaves the
+machine running the software.
+
+Degraded Operation Manager accepts contributions from individuals and
+organizations on the terms of the Apache License 2.0 without requiring a
+Contributor License Agreement (CLA). See CONTRIBUTING.md for contribution
+guidance.
