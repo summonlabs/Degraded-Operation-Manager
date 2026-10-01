@@ -469,7 +469,8 @@ talks to real facility hardware.
 **UNSUPPORTED**: BMS/DCIM integration, PDU, UPS or generator actuation, cooling
 hardware control, accelerator or RDMA/NVLink hardware, multi-host or
 distributed operation, cross-site replication, cryptographic operator
-authentication, and any vendor SDK. DOM records what adjacent owners report; it
+authentication, any vendor SDK, and non-Windows hosts (the POSIX code paths
+compile but are unvalidated here). DOM records what adjacent owners report; it
 never performs their work.
 
 ---
@@ -497,6 +498,12 @@ never performs their work.
 * Durable throughput is dominated by real flush and rename costs (about 73
   committed generations per second at the measured state size on this host); a
   higher rate requires a different durability contract, not a faster encoder.
+* Only Windows with MSVC was validated. The store's file primitives and
+  single-writer lock carry POSIX implementations that the build selects
+  automatically, but they are not exercised by the suites here, and the test
+  kit's child-process helper is Windows-only, so the multiprocess and crash
+  suites do not run on other hosts as shipped. Treat non-Windows support as
+  unvalidated until it is run and proven on such a host.
 
 ---
 
