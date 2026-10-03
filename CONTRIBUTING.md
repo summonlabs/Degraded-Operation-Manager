@@ -25,7 +25,7 @@ Requires C++20 and CMake 3.20 or newer. On Windows use an MSVC toolchain; the he
 
 ## Testing
 
-Add cases to the suite that matches the claim, using the small harness in `tests/testkit`. Randomized and property tests must print their seed and check invariants after every mutation. Never use a timeout, watchdog or forced termination to make a failing or hanging test pass: a hang is a defect to diagnose. Crash and multiprocess claims must be proven with real operating system processes, never with serialization-only or exception-only tests. The suite must pass in Release and Debug with zero first-party warnings.
+Add cases to the suite that matches the claim, using the small harness in `tests/testkit`. Randomized and property tests must print their seed and check invariants after every mutation. Crash and multiprocess claims must be proven with real operating system processes, never with serialization-only or exception-only tests. The suite must pass in Release and Debug with zero first-party warnings.
 
 ## Style
 
