@@ -450,6 +450,85 @@ DOM_TEST(a_torn_journal_tail_is_discarded_and_the_store_keeps_working) {
   }
 }
 
+// The journal gains two records with every publication, and an open reads it
+// whole, within the byte bound every file read has. A store that has published
+// for long enough must still open.
+DOM_TEST(the_journal_does_not_outgrow_what_an_open_accepts) {
+  auto directory = dom::test::TempDir::Create("persist-journal-bound");
+  DOM_CHECK_OK(directory);
+  const PolicyDocument policy = dom::test::MakePolicy();
+  {
+    auto options = dom::test::MakeCoordinatorOptions(directory.value().path(), policy, 111);
+    auto coordinator = Coordinator::Open(options);
+    DOM_CHECK_OK(coordinator);
+  }
+
+  // Bring the journal to within one record of the bound, as a long history of
+  // publications does: valid records of an old generation, which recovery
+  // reads and has no use for.
+  const std::string journal = dom::test::Join(directory.value().path(), "journal.domj");
+  const std::vector<std::uint8_t> record =
+      JournalRecord(3, 1, Sha256::Of(std::string_view("history")), std::string(4096, 'h'));
+  const std::uint64_t existing = static_cast<std::uint64_t>(fs::file_size(journal));
+  const std::uint64_t copies = (limits::kMaxEnvelopeBytes - existing) / record.size();
+  {
+    std::vector<std::uint8_t> history;
+    history.reserve(static_cast<std::size_t>(copies) * record.size());
+    for (std::uint64_t i = 0; i < copies; ++i) {
+      history.insert(history.end(), record.begin(), record.end());
+    }
+    AppendBytes(journal, history);
+  }
+  DOM_CHECK(static_cast<std::uint64_t>(fs::file_size(journal)) <= limits::kMaxEnvelopeBytes);
+  DOM_CHECK(static_cast<std::uint64_t>(fs::file_size(journal)) + record.size() >
+            limits::kMaxEnvelopeBytes);
+
+  std::uint64_t published = 0;
+  {
+    auto options = dom::test::MakeCoordinatorOptions(directory.value().path(), policy, 111);
+    auto coordinator = Coordinator::Open(options);
+    DOM_CHECK_OK(coordinator);
+    // More publications than one history record is long.
+    for (int i = 0; i < 24; ++i) {
+      dom::test::EvidenceOptions evidence_options;
+      evidence_options.revision = static_cast<std::uint64_t>(i + 1);
+      evidence_options.observed_at_ms = 1000 + static_cast<std::uint64_t>(i) * 100000;
+      evidence_options.severity = i % 2 == 0 ? 3 : 0;
+      evidence_options.redundancy = i % 2 == 0 ? 400 : 1000;
+      auto evidence = dom::test::MakeEvidence(evidence_options);
+      DOM_CHECK_OK(EvaluateOnce(*coordinator.value(), evidence, "bound-" + std::to_string(i),
+                                evidence_options.observed_at_ms,
+                                static_cast<std::uint64_t>(i + 1)));
+    }
+    auto status = coordinator.value()->GetStatus();
+    DOM_CHECK_OK(status);
+    published = status.value().state_sequence.value();
+    DOM_CHECK(published >= 25ull);
+  }
+  {
+    StoreOptions options;
+    options.directory = directory.value().path();
+    auto store = StateStore::Open(options);
+    DOM_CHECK_OK(store);
+    DOM_CHECK_EQ(store.value()->state().sequence.value(), published);
+    auto on_disk = store.value()->VerifyOnDisk();
+    DOM_CHECK_OK(on_disk);
+    DOM_CHECK_EQ(on_disk.value().digest(), store.value()->state().digest());
+  }
+  DOM_CHECK(static_cast<std::uint64_t>(fs::file_size(journal)) < (2ull << 20));
+
+  // The journal that replaced the long one still names the published
+  // generation: a store whose newest snapshot is taken away is refused.
+  const std::vector<std::string> snapshots = SnapshotFiles(directory.value().path());
+  DOM_CHECK(!snapshots.empty());
+  fs::remove(snapshots.back());
+  {
+    StoreOptions options;
+    options.directory = directory.value().path();
+    DOM_CHECK_ERR(StateStore::Open(options), ErrorCode::Corrupt);
+  }
+}
+
 DOM_TEST(commit_preconditions_and_reentrancy_are_enforced) {
   auto directory = dom::test::TempDir::Create("persist-precondition");
   DOM_CHECK_OK(directory);

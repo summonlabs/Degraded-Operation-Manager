@@ -46,6 +46,44 @@ bool EndsWith(const std::string& text, const char* suffix) {
   return text.compare(text.size() - length, length, suffix) == 0;
 }
 
+// The journal gains two records with every publication, and an open reads it
+// whole, within the byte bound every file read has. A journal that was only
+// ever appended to would pass that bound in time, and the store could not be
+// opened again. Recovery uses the records at or after the published generation
+// and nothing older, so a journal longer than this is replaced by one that
+// holds the commit marker of the published generation alone.
+constexpr std::uint64_t kJournalCompactBytes = 1ull << 20;
+
+// Best effort: the long journal stays valid when the replacement cannot be
+// written or published, and the next publication tries again. The replacement
+// is staged under a name that an open removes as a stray file, and it takes
+// the journal's place atomically, so a crash leaves one valid journal.
+void CompactJournalIfLong(const std::string& directory, const PersistedState& state) {
+  const std::string journal_path = internal::JoinPath(directory, internal::kJournalFileName);
+  const Result<std::uint64_t> size = internal::FileSize(journal_path);
+  if (!size || size.value() <= kJournalCompactBytes) {
+    return;
+  }
+  std::vector<std::uint8_t> bytes = internal::EncodeJournalHeader();
+  if (state.sequence.value() != 0) {
+    internal::JournalRecord marker;
+    marker.kind = internal::JournalRecordKind::Committed;
+    marker.sequence = state.sequence;
+    marker.digest = state.digest();
+    marker.detail = "journal shortened to the published generation";
+    const auto encoded = internal::EncodeJournalRecord(marker);
+    if (!encoded) {
+      return;
+    }
+    bytes.insert(bytes.end(), encoded.value().begin(), encoded.value().end());
+  }
+  const std::string staged = journal_path + internal::kStagedSuffix;
+  if (!internal::WriteFileFlushed(staged, bytes).ok() ||
+      !internal::AtomicReplace(staged, journal_path).ok()) {
+    internal::RemoveFile(staged);
+  }
+}
+
 }  // namespace
 
 const char* CommitStageName(CommitStage stage) noexcept {
@@ -288,6 +326,7 @@ Result<std::unique_ptr<StateStore>> StateStore::Open(const StoreOptions& options
 
   store->state_ = std::move(state);
   store->recovery_ = std::move(report);
+  CompactJournalIfLong(options.directory, store->state_);
 
   // Retain only the newest generations so the store does not grow without
   // bound; older files are deleted on a best-effort basis.
@@ -425,6 +464,7 @@ Result<StateSequence> StateStore::Commit(PersistedState next, const CommitOption
     recovery_.detail += "; commit marker could not be written after publication";
     recovery_.repaired_markers = 1;
   }
+  CompactJournalIfLong(directory_, state_);
 
   auto names = internal::ListDirectory(directory_);
   if (names) {

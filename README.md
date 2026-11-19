@@ -281,6 +281,9 @@ idempotency window and counters.
    written the published generation is still authoritative).
 
 The store keeps the two newest generations so a rollback can be detected.
+The journal gains two records with every publication; once it is longer than
+1 MiB it is replaced, atomically, by one that holds the commit marker of the
+published generation, so it stays within what recovery reads.
 
 ### 4.3 Recovery
 
